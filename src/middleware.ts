@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { ANON_COOKIE_NAME } from "@/lib/anon";
 
-export function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const response = NextResponse.next();
   const existing = request.cookies.get(ANON_COOKIE_NAME)?.value;
 
