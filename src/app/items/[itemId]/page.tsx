@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { cookies } from "next/headers";
+import { ANON_COOKIE_NAME } from "@/lib/anon";
 import { getRankingItemDetail } from "@/lib/ranking";
 import { facultyLabel, requestStatusLabel, universityKindLabel } from "@/lib/labels";
 
@@ -29,10 +31,12 @@ const errorMessages: Record<string, string> = {
 export default async function ItemPage({ params, searchParams }: PageProps) {
   const { itemId } = await params;
   const query = await searchParams;
+  const cookieStore = await cookies();
+  const anonId = cookieStore.get(ANON_COOKIE_NAME)?.value;
   const ok = typeof query.ok === "string" ? query.ok : "";
   const error = typeof query.error === "string" ? query.error : "";
 
-  const detail = await getRankingItemDetail(itemId);
+  const detail = await getRankingItemDetail(itemId, anonId);
   if (!detail) {
     notFound();
   }
@@ -114,7 +118,7 @@ export default async function ItemPage({ params, searchParams }: PageProps) {
                 >
                   <p>{comment.body}</p>
                   <p className="subtle">{new Date(comment.created_at).toLocaleString("ja-JP")}</p>
-                  {comment.deleted_at ? null : (
+                  {comment.deleted_at || !comment.can_delete ? null : (
                     <form action={`/api/comments/${comment.id}/delete`} method="post">
                       <input type="hidden" name="redirect_to" value={`/items/${detail.item.id}`} />
                       <button type="submit" className="ghost">
@@ -141,4 +145,3 @@ export default async function ItemPage({ params, searchParams }: PageProps) {
     </section>
   );
 }
-

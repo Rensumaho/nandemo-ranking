@@ -27,6 +27,7 @@ export type RequestComment = {
   body: string;
   created_at: string;
   deleted_at: string | null;
+  can_delete: boolean;
 };
 
 export type RankingItemDetail = {
@@ -55,7 +56,10 @@ export async function getRankingItems(): Promise<RankingItem[]> {
   return rows;
 }
 
-export async function getRankingItemDetail(itemId: string): Promise<RankingItemDetail | null> {
+export async function getRankingItemDetail(
+  itemId: string,
+  viewerAnonId?: string,
+): Promise<RankingItemDetail | null> {
   const itemRes = await db.query<
     RankingItem & {
       rank: number;
@@ -118,12 +122,13 @@ export async function getRankingItemDetail(itemId: string): Promise<RankingItemD
           c.parent_comment_id,
           c.body,
           c.created_at::text,
-          c.deleted_at::text
+          c.deleted_at::text,
+          case when $2::text is not null and c.anon_id = $2 then true else false end as can_delete
         from comments c
         where c.request_id = any($1::uuid[])
         order by c.created_at asc
       `,
-      [requestIds],
+      [requestIds, viewerAnonId ?? null],
     );
 
     commentsByRequestId = commentRes.rows.reduce<Record<string, RequestComment[]>>((acc, row) => {
@@ -238,4 +243,3 @@ export async function resolveDailyRequests(now: Date = new Date()) {
     client.release();
   }
 }
-
