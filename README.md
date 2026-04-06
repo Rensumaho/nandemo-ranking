@@ -1,5 +1,9 @@
 # Nandemo Ranking - Requirements Draft
 
+## Latest Confirmed Decisions
+
+- See [docs/decided-specs-2026-04-06.md](docs/decided-specs-2026-04-06.md) for wall-session confirmed specs.
+
 ## 1. Purpose
 
 This project provides rankings for topics that attract online attention, such as:
@@ -149,4 +153,3 @@ Item: Tohoku University (Science/Engineering)
 - Duplicate or conflicting requests for same item/day handling
 - Audit UI for applied/rejected requests
 - Topic-specific rule tuning (different categories may need different resolution rules)
-
