@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { db, withDbClient } from "@/lib/db";
 
 export type RankingItem = {
   id: string;
@@ -147,99 +147,98 @@ export async function getRankingItemDetail(
 }
 
 export async function resolveDailyRequests(now: Date = new Date()) {
-  const client = await db.connect();
-  try {
-    await client.query("begin");
+  return withDbClient(async (client) => {
+    try {
+      await client.query("begin");
 
-    const pendingRes = await client.query<{
-      id: string;
-      ranking_item_id: string;
-      requested_delta: number;
-    }>(
-      `
-        select
-          r.id,
-          t.ranking_item_id,
-          r.requested_delta
-        from score_change_requests r
-        join threads t on t.id = r.thread_id
-        where r.status = 'pending'
-          and r.voting_deadline_at <= $1
-        for update of r
-      `,
-      [now.toISOString()],
-    );
-
-    let appliedCount = 0;
-    let rejectedCount = 0;
-
-    for (const req of pendingRes.rows) {
-      const reactionRes = await client.query<{ good_count: number; bad_count: number }>(
+      const pendingRes = await client.query<{
+        id: string;
+        ranking_item_id: string;
+        requested_delta: number;
+      }>(
         `
           select
-            count(*) filter (where reaction_type = 'good')::int as good_count,
-            count(*) filter (where reaction_type = 'bad')::int as bad_count
-          from reactions
-          where request_id = $1
+            r.id,
+            t.ranking_item_id,
+            r.requested_delta
+          from score_change_requests r
+          join threads t on t.id = r.thread_id
+          where r.status = 'pending'
+            and r.voting_deadline_at <= $1
+          for update of r
         `,
-        [req.id],
+        [now.toISOString()],
       );
 
-      const { good_count: goodCount, bad_count: badCount } = reactionRes.rows[0];
-      const shouldApply = goodCount > badCount;
+      let appliedCount = 0;
+      let rejectedCount = 0;
 
-      const scoreRes = await client.query<{ current_score: number }>(
-        `select current_score from ranking_items where id = $1 for update`,
-        [req.ranking_item_id],
-      );
+      for (const req of pendingRes.rows) {
+        const reactionRes = await client.query<{ good_count: number; bad_count: number }>(
+          `
+            select
+              count(*) filter (where reaction_type = 'good')::int as good_count,
+              count(*) filter (where reaction_type = 'bad')::int as bad_count
+            from reactions
+            where request_id = $1
+          `,
+          [req.id],
+        );
 
-      const scoreBefore = scoreRes.rows[0].current_score;
-      const appliedDelta = shouldApply ? req.requested_delta : 0;
-      const scoreAfter = scoreBefore + appliedDelta;
+        const { good_count: goodCount, bad_count: badCount } = reactionRes.rows[0];
+        const shouldApply = goodCount > badCount;
 
-      if (shouldApply) {
-        await client.query(`update ranking_items set current_score = $2, updated_at = now() where id = $1`, [
-          req.ranking_item_id,
-          scoreAfter,
+        const scoreRes = await client.query<{ current_score: number }>(
+          `select current_score from ranking_items where id = $1 for update`,
+          [req.ranking_item_id],
+        );
+
+        const scoreBefore = scoreRes.rows[0].current_score;
+        const appliedDelta = shouldApply ? req.requested_delta : 0;
+        const scoreAfter = scoreBefore + appliedDelta;
+
+        if (shouldApply) {
+          await client.query(`update ranking_items set current_score = $2, updated_at = now() where id = $1`, [
+            req.ranking_item_id,
+            scoreAfter,
+          ]);
+        }
+
+        await client.query(
+          `
+            insert into daily_score_logs (
+              ranking_item_id,
+              request_id,
+              score_before,
+              applied_delta,
+              score_after,
+              decision
+            ) values ($1, $2, $3, $4, $5, $6)
+          `,
+          [req.ranking_item_id, req.id, scoreBefore, appliedDelta, scoreAfter, shouldApply ? "applied" : "rejected"],
+        );
+
+        await client.query(`update score_change_requests set status = $2 where id = $1`, [
+          req.id,
+          shouldApply ? "applied" : "rejected",
         ]);
+
+        if (shouldApply) {
+          appliedCount += 1;
+        } else {
+          rejectedCount += 1;
+        }
       }
 
-      await client.query(
-        `
-          insert into daily_score_logs (
-            ranking_item_id,
-            request_id,
-            score_before,
-            applied_delta,
-            score_after,
-            decision
-          ) values ($1, $2, $3, $4, $5, $6)
-        `,
-        [req.ranking_item_id, req.id, scoreBefore, appliedDelta, scoreAfter, shouldApply ? "applied" : "rejected"],
-      );
-
-      await client.query(`update score_change_requests set status = $2 where id = $1`, [
-        req.id,
-        shouldApply ? "applied" : "rejected",
-      ]);
-
-      if (shouldApply) {
-        appliedCount += 1;
-      } else {
-        rejectedCount += 1;
-      }
+      await client.query("commit");
+      return {
+        processed: pendingRes.rowCount,
+        applied: appliedCount,
+        rejected: rejectedCount,
+      };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
     }
-
-    await client.query("commit");
-    return {
-      processed: pendingRes.rowCount,
-      applied: appliedCount,
-      rejected: rejectedCount,
-    };
-  } catch (error) {
-    await client.query("rollback");
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
