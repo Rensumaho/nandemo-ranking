@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { getSupabaseAdminClient, throwIfSupabaseError } from "@/lib/db";
 import { isSameOriginPath } from "@/lib/anon";
 
 export const runtime = "nodejs";
@@ -19,14 +19,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.redirect(new URL(`${redirectTo}?error=invalid-inquiry`, request.url));
   }
 
-  await db.query(
-    `
-      insert into inquiries (category, body, contact_email)
-      values ($1, $2, $3)
-    `,
-    [category, body, email],
-  );
+  const supabase = getSupabaseAdminClient();
+  const insertRes = await supabase.from("inquiries").insert({
+    category,
+    body,
+    contact_email: email,
+  });
+  throwIfSupabaseError(insertRes, "Failed to create inquiry");
 
   return NextResponse.redirect(new URL(`${redirectTo}?ok=inquiry-sent`, request.url));
 }
-

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { getSupabaseAdminClient, throwIfSupabaseError } from "@/lib/db";
 import { canCreateComment } from "@/lib/rate-limit";
 import { ensureAnonCookie, getAnonIdFromRequest, isSameOriginPath } from "@/lib/anon";
 
@@ -35,16 +35,16 @@ export async function POST(request: NextRequest) {
     return res;
   }
 
-  await db.query(
-    `
-      insert into comments (request_id, parent_comment_id, anon_id, body)
-      values ($1, $2, $3, $4)
-    `,
-    [requestId, parentCommentId, anonId, body],
-  );
+  const supabase = getSupabaseAdminClient();
+  const insertRes = await supabase.from("comments").insert({
+    request_id: requestId,
+    parent_comment_id: parentCommentId,
+    anon_id: anonId,
+    body,
+  });
+  throwIfSupabaseError(insertRes, "Failed to create comment");
 
   const res = NextResponse.redirect(new URL(`${redirectTo}?ok=comment-created`, request.url));
   ensureAnonCookie(res, anonId);
   return res;
 }
-

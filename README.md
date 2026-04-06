@@ -6,13 +6,24 @@
 
 ## Local Setup (Next.js + Supabase PostgreSQL)
 
-1. Copy `.env.example` to `.env.local` and set `DATABASE_URL`.
-2. Initialize DB schema and university seeds:
+1. Copy `.env.example` to `.env.local`.
+2. Set at least these vars in `.env.local`:
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+3. If you run local DB setup scripts, also set `DATABASE_URL`.
+4. Initialize DB schema and university seeds:
    - `npm run db:setup`
-3. Insert sample requests/comments/reactions for testing:
+5. Insert sample requests/comments/reactions for testing:
    - `npm run db:seed:test`
-4. Start app:
+6. Start app:
    - `npm run dev`
+
+## Cloudflare Workers Secrets
+
+Set these as Worker secrets before deploy:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
 
 ### Implemented API Endpoints
 

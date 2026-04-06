@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { getSupabaseAdminClient, throwIfSupabaseError } from "@/lib/db";
 import { ensureAnonCookie, getAnonIdFromRequest, isSameOriginPath } from "@/lib/anon";
 
 export const runtime = "nodejs";
@@ -18,18 +18,19 @@ export async function POST(request: NextRequest) {
     return res;
   }
 
-  await db.query(
-    `
-      insert into reactions (request_id, anon_id, reaction_type)
-      values ($1, $2, $3)
-      on conflict (request_id, anon_id)
-      do update set reaction_type = excluded.reaction_type, created_at = now()
-    `,
-    [requestId, anonId, reactionType],
+  const supabase = getSupabaseAdminClient();
+  const upsertRes = await supabase.from("reactions").upsert(
+    {
+      request_id: requestId,
+      anon_id: anonId,
+      reaction_type: reactionType,
+      created_at: new Date().toISOString(),
+    },
+    { onConflict: "request_id,anon_id" },
   );
+  throwIfSupabaseError(upsertRes, "Failed to upsert reaction");
 
   const res = NextResponse.redirect(new URL(`${redirectTo}?ok=reaction-updated`, request.url));
   ensureAnonCookie(res, anonId);
   return res;
 }
-

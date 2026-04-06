@@ -1,4 +1,4 @@
-import { db, withDbClient } from "@/lib/db";
+import { getSupabaseAdminClient, requireSupabaseData, throwIfSupabaseError } from "@/lib/db";
 
 export type RankingItem = {
   id: string;
@@ -36,209 +36,337 @@ export type RankingItemDetail = {
   commentsByRequestId: Record<string, RequestComment[]>;
 };
 
-export async function getRankingItems(): Promise<RankingItem[]> {
-  const { rows } = await db.query<RankingItem>(
-    `
-      select
-        ri.id,
-        ri.display_name,
-        u.name as university_name,
-        u.kind as university_kind,
-        ri.faculty_type,
-        ri.current_score
-      from ranking_items ri
-      join universities u on u.id = ri.university_id
-      where ri.is_active = true
-      order by ri.current_score desc, ri.display_name asc
-    `,
-  );
+type UniversityRow = {
+  name: string;
+  kind: RankingItem["university_kind"];
+};
 
-  return rows;
+type RankingItemRow = {
+  id: string;
+  display_name: string;
+  faculty_type: RankingItem["faculty_type"];
+  current_score: number;
+  universities: UniversityRow | UniversityRow[] | null;
+};
+
+type RankingRow = {
+  id: string;
+  current_score: number;
+};
+
+type ScoreChangeRequestRow = {
+  id: string;
+  requested_delta: number;
+  reason_text: string;
+  status: RankingRequest["status"];
+  voting_deadline_at: string;
+  created_at: string;
+};
+
+type ReactionRow = {
+  request_id: string;
+  reaction_type: "good" | "bad";
+};
+
+type CommentRow = {
+  id: string;
+  request_id: string;
+  parent_comment_id: string | null;
+  body: string;
+  created_at: string;
+  deleted_at: string | null;
+  anon_id: string;
+};
+
+type PendingRequestRow = {
+  id: string;
+  thread_id: string;
+  requested_delta: number;
+};
+
+type ThreadRow = {
+  id: string;
+  ranking_item_id: string;
+};
+
+type RankingScoreRow = {
+  id: string;
+  current_score: number;
+};
+
+function normalizeUniversity(row: UniversityRow | UniversityRow[] | null): UniversityRow {
+  if (Array.isArray(row)) {
+    if (row.length > 0) {
+      return row[0];
+    }
+    throw new Error("University relation is empty");
+  }
+  if (!row) {
+    throw new Error("University relation is missing");
+  }
+  return row;
+}
+
+export async function getRankingItems(): Promise<RankingItem[]> {
+  const supabase = getSupabaseAdminClient();
+  const itemRes = await supabase
+    .from("ranking_items")
+    .select("id,display_name,faculty_type,current_score,universities!inner(name,kind)")
+    .eq("is_active", true)
+    .order("current_score", { ascending: false })
+    .order("display_name", { ascending: true });
+
+  const rows = requireSupabaseData(itemRes, "Failed to fetch ranking items") as RankingItemRow[];
+
+  return rows.map((row) => {
+    const university = normalizeUniversity(row.universities);
+    return {
+      id: row.id,
+      display_name: row.display_name,
+      university_name: university.name,
+      university_kind: university.kind,
+      faculty_type: row.faculty_type,
+      current_score: row.current_score,
+    };
+  });
 }
 
 export async function getRankingItemDetail(
   itemId: string,
   viewerAnonId?: string,
 ): Promise<RankingItemDetail | null> {
-  const itemRes = await db.query<
-    RankingItem & {
-      rank: number;
-    }
-  >(
-    `
-      with ranked as (
-        select
-          ri.id,
-          ri.display_name,
-          u.name as university_name,
-          u.kind as university_kind,
-          ri.faculty_type,
-          ri.current_score,
-          dense_rank() over(order by ri.current_score desc) as rank
-        from ranking_items ri
-        join universities u on u.id = ri.university_id
-        where ri.is_active = true
-      )
-      select * from ranked where id = $1
-    `,
-    [itemId],
-  );
+  const supabase = getSupabaseAdminClient();
 
-  if (itemRes.rowCount === 0) {
+  const itemRes = await supabase
+    .from("ranking_items")
+    .select("id,display_name,faculty_type,current_score,universities!inner(name,kind)")
+    .eq("is_active", true)
+    .eq("id", itemId)
+    .maybeSingle();
+  throwIfSupabaseError(itemRes, "Failed to fetch ranking item");
+
+  if (!itemRes.data) {
     return null;
   }
 
-  const reqRes = await db.query<RankingRequest>(
-    `
-      select
-        r.id,
-        r.requested_delta,
-        r.reason_text,
-        r.status,
-        r.voting_deadline_at::text,
-        r.created_at::text,
-        count(*) filter (where re.reaction_type = 'good')::int as good_count,
-        count(*) filter (where re.reaction_type = 'bad')::int as bad_count
-      from threads t
-      join score_change_requests r on r.thread_id = t.id
-      left join reactions re on re.request_id = r.id
-      where t.ranking_item_id = $1
-      group by r.id
-      order by r.created_at desc
-      limit 50
-    `,
-    [itemId],
-  );
+  const itemRow = itemRes.data as RankingItemRow;
+  const university = normalizeUniversity(itemRow.universities);
 
-  const requestIds = reqRes.rows.map((row) => row.id);
+  const rankingRes = await supabase
+    .from("ranking_items")
+    .select("id,current_score")
+    .eq("is_active", true)
+    .order("current_score", { ascending: false })
+    .order("id", { ascending: true });
+  const rankingRows = requireSupabaseData(rankingRes, "Failed to fetch ranking positions") as RankingRow[];
+
+  let currentRank = 0;
+  let previousScore: number | null = null;
+  const rankByItemId = new Map<string, number>();
+  for (const row of rankingRows) {
+    if (previousScore === null || previousScore !== row.current_score) {
+      currentRank += 1;
+      previousScore = row.current_score;
+    }
+    rankByItemId.set(row.id, currentRank);
+  }
+
+  const rank = rankByItemId.get(itemId);
+  if (!rank) {
+    return null;
+  }
+
+  const threadRes = await supabase.from("threads").select("id").eq("ranking_item_id", itemId).maybeSingle();
+  throwIfSupabaseError(threadRes, "Failed to fetch thread");
+
+  const threadId = threadRes.data?.id ?? null;
+  let requestRows: ScoreChangeRequestRow[] = [];
+  if (threadId) {
+    const requestRes = await supabase
+      .from("score_change_requests")
+      .select("id,requested_delta,reason_text,status,voting_deadline_at,created_at")
+      .eq("thread_id", threadId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    requestRows = requireSupabaseData(requestRes, "Failed to fetch score requests") as ScoreChangeRequestRow[];
+  }
+
+  const requestIds = requestRows.map((row) => row.id);
+  const reactionCountByRequestId = new Map<string, { good: number; bad: number }>();
+
+  if (requestIds.length > 0) {
+    const reactionRes = await supabase
+      .from("reactions")
+      .select("request_id,reaction_type")
+      .in("request_id", requestIds);
+    const reactionRows = requireSupabaseData(reactionRes, "Failed to fetch reactions") as ReactionRow[];
+    for (const row of reactionRows) {
+      const current = reactionCountByRequestId.get(row.request_id) ?? { good: 0, bad: 0 };
+      if (row.reaction_type === "good") {
+        current.good += 1;
+      } else {
+        current.bad += 1;
+      }
+      reactionCountByRequestId.set(row.request_id, current);
+    }
+  }
+
+  const requests: RankingRequest[] = requestRows.map((row) => {
+    const counts = reactionCountByRequestId.get(row.id) ?? { good: 0, bad: 0 };
+    return {
+      id: row.id,
+      requested_delta: row.requested_delta,
+      reason_text: row.reason_text,
+      status: row.status,
+      voting_deadline_at: row.voting_deadline_at,
+      created_at: row.created_at,
+      good_count: counts.good,
+      bad_count: counts.bad,
+    };
+  });
+
   let commentsByRequestId: Record<string, RequestComment[]> = {};
 
   if (requestIds.length > 0) {
-    const commentRes = await db.query<RequestComment>(
-      `
-        select
-          c.id,
-          c.request_id,
-          c.parent_comment_id,
-          c.body,
-          c.created_at::text,
-          c.deleted_at::text,
-          case when $2::text is not null and c.anon_id = $2 then true else false end as can_delete
-        from comments c
-        where c.request_id = any($1::uuid[])
-        order by c.created_at asc
-      `,
-      [requestIds, viewerAnonId ?? null],
-    );
+    const commentRes = await supabase
+      .from("comments")
+      .select("id,request_id,parent_comment_id,body,created_at,deleted_at,anon_id")
+      .in("request_id", requestIds)
+      .order("created_at", { ascending: true });
+    const commentRows = requireSupabaseData(commentRes, "Failed to fetch comments") as CommentRow[];
 
-    commentsByRequestId = commentRes.rows.reduce<Record<string, RequestComment[]>>((acc, row) => {
+    commentsByRequestId = commentRows.reduce<Record<string, RequestComment[]>>((acc, row) => {
+      const canDelete = !!viewerAnonId && row.anon_id === viewerAnonId;
       const prev = acc[row.request_id] ?? [];
-      prev.push(row);
+      prev.push({
+        id: row.id,
+        request_id: row.request_id,
+        parent_comment_id: row.parent_comment_id,
+        body: row.body,
+        created_at: row.created_at,
+        deleted_at: row.deleted_at,
+        can_delete: canDelete,
+      });
       acc[row.request_id] = prev;
       return acc;
     }, {});
   }
 
   return {
-    item: itemRes.rows[0],
-    requests: reqRes.rows,
+    item: {
+      id: itemRow.id,
+      display_name: itemRow.display_name,
+      university_name: university.name,
+      university_kind: university.kind,
+      faculty_type: itemRow.faculty_type,
+      current_score: itemRow.current_score,
+      rank,
+    },
+    requests,
     commentsByRequestId,
   };
 }
 
 export async function resolveDailyRequests(now: Date = new Date()) {
-  return withDbClient(async (client) => {
-    try {
-      await client.query("begin");
+  const supabase = getSupabaseAdminClient();
+  const nowIso = now.toISOString();
 
-      const pendingRes = await client.query<{
-        id: string;
-        ranking_item_id: string;
-        requested_delta: number;
-      }>(
-        `
-          select
-            r.id,
-            t.ranking_item_id,
-            r.requested_delta
-          from score_change_requests r
-          join threads t on t.id = r.thread_id
-          where r.status = 'pending'
-            and r.voting_deadline_at <= $1
-          for update of r
-        `,
-        [now.toISOString()],
-      );
+  const pendingRes = await supabase
+    .from("score_change_requests")
+    .select("id,thread_id,requested_delta")
+    .eq("status", "pending")
+    .lte("voting_deadline_at", nowIso);
+  const pendingRows = requireSupabaseData(pendingRes, "Failed to fetch pending requests") as PendingRequestRow[];
 
-      let appliedCount = 0;
-      let rejectedCount = 0;
+  if (pendingRows.length === 0) {
+    return {
+      processed: 0,
+      applied: 0,
+      rejected: 0,
+    };
+  }
 
-      for (const req of pendingRes.rows) {
-        const reactionRes = await client.query<{ good_count: number; bad_count: number }>(
-          `
-            select
-              count(*) filter (where reaction_type = 'good')::int as good_count,
-              count(*) filter (where reaction_type = 'bad')::int as bad_count
-            from reactions
-            where request_id = $1
-          `,
-          [req.id],
-        );
+  const threadIds = [...new Set(pendingRows.map((row) => row.thread_id))];
+  const threadRes = await supabase.from("threads").select("id,ranking_item_id").in("id", threadIds);
+  const threadRows = requireSupabaseData(threadRes, "Failed to fetch threads") as ThreadRow[];
+  const rankingItemIdByThreadId = new Map<string, string>(
+    threadRows.map((row) => [row.id, row.ranking_item_id]),
+  );
 
-        const { good_count: goodCount, bad_count: badCount } = reactionRes.rows[0];
-        const shouldApply = goodCount > badCount;
+  const requestIds = pendingRows.map((row) => row.id);
+  const reactionRes = await supabase.from("reactions").select("request_id,reaction_type").in("request_id", requestIds);
+  const reactionRows = requireSupabaseData(reactionRes, "Failed to fetch reactions") as ReactionRow[];
 
-        const scoreRes = await client.query<{ current_score: number }>(
-          `select current_score from ranking_items where id = $1 for update`,
-          [req.ranking_item_id],
-        );
-
-        const scoreBefore = scoreRes.rows[0].current_score;
-        const appliedDelta = shouldApply ? req.requested_delta : 0;
-        const scoreAfter = scoreBefore + appliedDelta;
-
-        if (shouldApply) {
-          await client.query(`update ranking_items set current_score = $2, updated_at = now() where id = $1`, [
-            req.ranking_item_id,
-            scoreAfter,
-          ]);
-        }
-
-        await client.query(
-          `
-            insert into daily_score_logs (
-              ranking_item_id,
-              request_id,
-              score_before,
-              applied_delta,
-              score_after,
-              decision
-            ) values ($1, $2, $3, $4, $5, $6)
-          `,
-          [req.ranking_item_id, req.id, scoreBefore, appliedDelta, scoreAfter, shouldApply ? "applied" : "rejected"],
-        );
-
-        await client.query(`update score_change_requests set status = $2 where id = $1`, [
-          req.id,
-          shouldApply ? "applied" : "rejected",
-        ]);
-
-        if (shouldApply) {
-          appliedCount += 1;
-        } else {
-          rejectedCount += 1;
-        }
-      }
-
-      await client.query("commit");
-      return {
-        processed: pendingRes.rowCount,
-        applied: appliedCount,
-        rejected: rejectedCount,
-      };
-    } catch (error) {
-      await client.query("rollback");
-      throw error;
+  const reactionCountByRequestId = new Map<string, { good: number; bad: number }>();
+  for (const row of reactionRows) {
+    const current = reactionCountByRequestId.get(row.request_id) ?? { good: 0, bad: 0 };
+    if (row.reaction_type === "good") {
+      current.good += 1;
+    } else {
+      current.bad += 1;
     }
-  });
+    reactionCountByRequestId.set(row.request_id, current);
+  }
+
+  const rankingItemIds = [...new Set(threadRows.map((row) => row.ranking_item_id))];
+  const scoreRes = await supabase.from("ranking_items").select("id,current_score").in("id", rankingItemIds);
+  const scoreRows = requireSupabaseData(scoreRes, "Failed to fetch ranking scores") as RankingScoreRow[];
+  const scoreByRankingItemId = new Map<string, number>(scoreRows.map((row) => [row.id, row.current_score]));
+
+  let appliedCount = 0;
+  let rejectedCount = 0;
+
+  for (const req of pendingRows) {
+    const rankingItemId = rankingItemIdByThreadId.get(req.thread_id);
+    if (!rankingItemId) {
+      throw new Error(`Thread not found for request ${req.id}`);
+    }
+
+    const scoreBefore = scoreByRankingItemId.get(rankingItemId);
+    if (scoreBefore === undefined) {
+      throw new Error(`Ranking item not found for request ${req.id}`);
+    }
+
+    const counts = reactionCountByRequestId.get(req.id) ?? { good: 0, bad: 0 };
+    const shouldApply = counts.good > counts.bad;
+    const appliedDelta = shouldApply ? req.requested_delta : 0;
+    const scoreAfter = scoreBefore + appliedDelta;
+
+    if (shouldApply) {
+      const scoreUpdateRes = await supabase
+        .from("ranking_items")
+        .update({ current_score: scoreAfter, updated_at: nowIso })
+        .eq("id", rankingItemId);
+      throwIfSupabaseError(scoreUpdateRes, `Failed to update score for request ${req.id}`);
+      scoreByRankingItemId.set(rankingItemId, scoreAfter);
+    }
+
+    const logInsertRes = await supabase.from("daily_score_logs").insert({
+      ranking_item_id: rankingItemId,
+      request_id: req.id,
+      score_before: scoreBefore,
+      applied_delta: appliedDelta,
+      score_after: scoreAfter,
+      decision: shouldApply ? "applied" : "rejected",
+    });
+    throwIfSupabaseError(logInsertRes, `Failed to insert daily log for request ${req.id}`);
+
+    const requestUpdateRes = await supabase
+      .from("score_change_requests")
+      .update({ status: shouldApply ? "applied" : "rejected" })
+      .eq("id", req.id);
+    throwIfSupabaseError(requestUpdateRes, `Failed to update request status for request ${req.id}`);
+
+    if (shouldApply) {
+      appliedCount += 1;
+    } else {
+      rejectedCount += 1;
+    }
+  }
+
+  return {
+    processed: pendingRows.length,
+    applied: appliedCount,
+    rejected: rejectedCount,
+  };
 }

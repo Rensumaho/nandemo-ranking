@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { getSupabaseAdminClient, throwIfSupabaseError } from "@/lib/db";
 import { canCreateScoreRequest } from "@/lib/rate-limit";
 import { ensureAnonCookie, getAnonIdFromRequest, isSameOriginPath } from "@/lib/anon";
 
@@ -43,32 +43,26 @@ export async function POST(request: NextRequest) {
     return res;
   }
 
-  const threadRes = await db.query<{ id: string }>(
-    `select id from threads where ranking_item_id = $1 limit 1`,
-    [rankingItemId],
-  );
+  const supabase = getSupabaseAdminClient();
+  const threadRes = await supabase.from("threads").select("id").eq("ranking_item_id", rankingItemId).maybeSingle();
+  throwIfSupabaseError(threadRes, "Failed to find thread");
 
-  if (threadRes.rowCount === 0) {
+  if (!threadRes.data) {
     const res = NextResponse.redirect(new URL(`${redirectTo}?error=thread-not-found`, request.url));
     ensureAnonCookie(res, anonId);
     return res;
   }
 
-  await db.query(
-    `
-      insert into score_change_requests (
-        thread_id,
-        requested_delta,
-        reason_text,
-        voting_deadline_at,
-        created_by_anon_id
-      ) values ($1, $2, $3, $4, $5)
-    `,
-    [threadRes.rows[0].id, requestedDelta, reasonText, endOfTodayJstIso(), anonId],
-  );
+  const insertRes = await supabase.from("score_change_requests").insert({
+    thread_id: threadRes.data.id,
+    requested_delta: requestedDelta,
+    reason_text: reasonText,
+    voting_deadline_at: endOfTodayJstIso(),
+    created_by_anon_id: anonId,
+  });
+  throwIfSupabaseError(insertRes, "Failed to create score request");
 
   const res = NextResponse.redirect(new URL(`${redirectTo}?ok=request-created`, request.url));
   ensureAnonCookie(res, anonId);
   return res;
 }
-

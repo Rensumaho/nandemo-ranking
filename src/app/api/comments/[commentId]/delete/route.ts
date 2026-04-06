@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { getSupabaseAdminClient, requireSupabaseData } from "@/lib/db";
 import { ensureAnonCookie, getAnonIdFromRequest, isSameOriginPath } from "@/lib/anon";
 
 export const runtime = "nodejs";
@@ -15,23 +15,22 @@ export async function POST(request: NextRequest, { params }: Params) {
   const redirectTo = isSameOriginPath(redirectToRaw) ? redirectToRaw : "/";
   const anonId = getAnonIdFromRequest(request);
 
-  const resUpdate = await db.query(
-    `
-      update comments
-      set
-        body = 'このコメントは削除されました',
-        deleted_at = now(),
-        deleted_by_anon_id = $2,
-        delete_reason = 'user_request'
-      where id = $1
-        and anon_id = $2
-        and deleted_at is null
-      returning id
-    `,
-    [commentId, anonId],
-  );
+  const supabase = getSupabaseAdminClient();
+  const deleteRes = await supabase
+    .from("comments")
+    .update({
+      body: "縺薙・繧ｳ繝｡繝ｳ繝医・蜑企勁縺輔ｌ縺ｾ縺励◆",
+      deleted_at: new Date().toISOString(),
+      deleted_by_anon_id: anonId,
+      delete_reason: "user_request",
+    })
+    .eq("id", commentId)
+    .eq("anon_id", anonId)
+    .is("deleted_at", null)
+    .select("id");
+  const updatedRows = requireSupabaseData(deleteRes, "Failed to delete comment");
 
-  const statusQuery = (resUpdate.rowCount ?? 0) > 0 ? "ok=comment-deleted" : "error=comment-delete-denied";
+  const statusQuery = updatedRows.length > 0 ? "ok=comment-deleted" : "error=comment-delete-denied";
   const res = NextResponse.redirect(new URL(`${redirectTo}?${statusQuery}`, request.url));
   ensureAnonCookie(res, anonId);
   return res;
