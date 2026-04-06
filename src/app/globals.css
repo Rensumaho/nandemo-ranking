@@ -1,0 +1,225 @@
+:root {
+  --bg: #f7f4ef;
+  --bg-accent: #f0e6d8;
+  --text: #1c1f24;
+  --primary: #004f5a;
+  --primary-ink: #ffffff;
+  --line: #d4d8de;
+  --card: #ffffff;
+  --good: #0b7a4f;
+  --bad: #9f2f2f;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  color: var(--text);
+  font-family: var(--font-main), "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  line-height: 1.5;
+  background:
+    radial-gradient(circle at 20% -20%, #fff5d9 0%, rgba(255, 245, 217, 0) 40%),
+    linear-gradient(180deg, var(--bg-accent), var(--bg));
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.container {
+  width: min(1080px, calc(100% - 2rem));
+  margin-inline: auto;
+}
+
+.siteHeader {
+  position: sticky;
+  top: 0;
+  backdrop-filter: blur(10px);
+  background: rgba(247, 244, 239, 0.85);
+  border-bottom: 1px solid var(--line);
+  z-index: 10;
+}
+
+.siteHeader .container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 0;
+  gap: 1rem;
+}
+
+.siteTitle {
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.siteNav {
+  display: flex;
+  gap: 1rem;
+  font-weight: 600;
+}
+
+.contentArea {
+  padding-block: 1.5rem 3rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem;
+}
+
+.stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.heading {
+  margin: 0;
+  font-size: clamp(1.2rem, 2vw, 1.8rem);
+  letter-spacing: 0.01em;
+}
+
+.subtle {
+  color: #5d6470;
+}
+
+.statusOk,
+.statusError {
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.92rem;
+}
+
+.statusOk {
+  background: #e6f6ee;
+  border: 1px solid #b7e3cd;
+}
+
+.statusError {
+  background: #fdeaea;
+  border: 1px solid #f4bcbc;
+}
+
+table.ranking {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+table.ranking th,
+table.ranking td {
+  text-align: left;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+table.ranking th {
+  background: #f7fafc;
+  font-size: 0.9rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.8rem;
+}
+
+form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  background: #fff;
+}
+
+button {
+  border: none;
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button.ghost {
+  background: #eef3f5;
+  color: #173138;
+}
+
+button.good {
+  background: var(--good);
+}
+
+button.bad {
+  background: var(--bad);
+}
+
+.rowActions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.requestCard {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.9rem;
+  background: #fff;
+}
+
+.comment {
+  border-left: 3px solid #d2d8df;
+  padding-left: 0.7rem;
+  margin-top: 0.5rem;
+}
+
+.comment.reply {
+  margin-left: 1rem;
+}
+
+@media (max-width: 720px) {
+  .siteHeader .container {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  table.ranking th,
+  table.ranking td {
+    padding: 0.55rem;
+    font-size: 0.9rem;
+  }
+}

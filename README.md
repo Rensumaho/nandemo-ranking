@@ -4,6 +4,27 @@
 
 - See [docs/decided-specs-2026-04-06.md](docs/decided-specs-2026-04-06.md) for wall-session confirmed specs.
 
+## Local Setup (Next.js + Supabase PostgreSQL)
+
+1. Copy `.env.example` to `.env.local` and set `DATABASE_URL`.
+2. Initialize DB schema and university seeds:
+   - `npm run db:setup`
+3. Insert sample requests/comments/reactions for testing:
+   - `npm run db:seed:test`
+4. Start app:
+   - `npm run dev`
+
+### Implemented API Endpoints
+
+- `GET /api/ranking-items`
+- `GET /api/ranking-items/[itemId]`
+- `POST /api/score-requests`
+- `POST /api/comments`
+- `POST /api/comments/[commentId]/delete`
+- `POST /api/reactions`
+- `POST /api/inquiries`
+- `POST /api/admin/resolve-daily`
+
 ## 1. Purpose
 
 This project provides rankings for topics that attract online attention, such as:

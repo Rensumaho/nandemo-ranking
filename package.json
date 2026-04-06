@@ -1,0 +1,28 @@
+{
+  "name": "nandemo-ranking",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:setup": "node --env-file=.env.local scripts/setup-db.mjs",
+    "db:seed:test": "node --env-file=.env.local scripts/seed-test-data.mjs"
+  },
+  "dependencies": {
+    "next": "16.2.2",
+    "pg": "^8.20.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/pg": "^8.20.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.2",
+    "typescript": "^5"
+  }
+}
